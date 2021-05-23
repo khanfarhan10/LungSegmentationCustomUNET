@@ -1,0 +1,12 @@
+numpy
+keras
+tensorflow-cpu==2.5.0
+# tensorflow==2.1.0
+# tensorflow==2.4.0
+# ipykernel 
+
+# opencv-python
+opencv-python-headless==4.2.0.32 # fixes libgl error
+gunicorn==20.0.4 # Deployment to Heroku
+
+Flask==1.1.1
