@@ -1,6 +1,11 @@
 numpy
-tensorflow-cpu==2.4.1
-keras
+tensorflow-cpu==2.5.0
+# tensorflow-cpu==2.1.0 # ImportError: Keras requires TensorFlow 2.2 or higher. Install TensorFlow via `pip install tensorflow`
+# tensorflow-cpu==2.4.1 # AttributeError: module 'tensorflow.compat.v2.__internal__' has no attribute 'tf2'
+# tensorflow-cpu==2.4.0 # AttributeError: module 'tensorflow.compat.v2.__internal__' has no attribute 'tf2'
+
+# keras AttributeError: module 'keras.utils.generic_utils' has no attribute 'populate_dict_with_module_objects'
+keras==2.4.0
 # tensorflow-cpu==2.5.0
 # tensorflow==2.1.0
 # tensorflow==2.4.0
