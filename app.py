@@ -196,11 +196,11 @@ def zipper(dir_path, zip_path):
 @app.route('/download')
 def return_files_tut():
     # ZipPath = os.path.join(FileSaveDir, "CarDamageDetectionResults.zip")
-    ZipPath = "CarDamageDetectionResults.zip"
+    ZipPath = "LungMasksDetectionResults.zip"
     zipper(FileSaveDir, ZipPath)
 
     return send_file(ZipPath, as_attachment=True, mimetype='application/zip',
-                     attachment_filename='CarDamageDetectionResults.zip')
+                     attachment_filename=ZipPath)
 
 
 @app.route('/favicon.ico')
