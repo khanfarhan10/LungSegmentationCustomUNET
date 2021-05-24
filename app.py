@@ -1,39 +1,123 @@
 """
 deactivate
 conda.bat deactivate
-CarUNETCPUEnv\Scripts\activate
+LungUNETCPUEnv\Scripts\activate
 python app.py
 """
 from flask import Flask, render_template, request, url_for, send_from_directory, jsonify, send_file
 import os
 import zipfile
 
+import warnings
+warnings.filterwarnings('ignore')
+from tensorflow import keras
 
-import colorsys
 import random
 from copy import deepcopy
 
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-# %env SM_FRAMEWORK=tf.keras
-os.environ['SM_FRAMEWORK'] = "tf.keras"
-
 import cv2
 import tensorflow as tf
 # import keras
 import numpy as np
 
-MAIN_SIZE_X = 512
-MAIN_SIZE_Y = 512
 
        
+def props(arr,u=0):
+    print("Shape :",arr.shape,"Maximum :",arr.max(),"Minimum :",arr.min(),"Data Type :",arr.dtype,end=' ')
+    if u==1:
+        print("Unique Values :",np.unique(arr),end=' ')
+    print()
 
-import segmentation_models as sm
+def dice_coef(y_true, y_pred):
+    y_true_f = tf.keras.flatten(y_true)
+    y_pred_f = tf.keras.flatten(y_pred)
+    intersection = tf.keras.sum(y_true_f * y_pred_f)
+    return (2. * intersection + 1) / (tf.keras.sum(y_true_f) + tf.keras.sum(y_pred_f) + 1)
 
-BACKBONE = 'resnet34' #'efficientnetb3'
-BATCH_SIZE = 8
-CLASSES = ['scratch']
-LR = 0.0001
+def dice_coef_loss(y_true, y_pred):
+    return -dice_coef(y_true, y_pred)
+
+def unet(input_size=(256,256,1)):
+    inputs = tf.keras.layers.Input(input_size)
+    
+    conv1 = tf.keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same')(inputs)
+    conv1 = tf.keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same')(conv1)
+    pool1 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2))(conv1)
+
+    conv2 = tf.keras.layers.Conv2D(64, (3, 3), activation='relu', padding='same')(pool1)
+    conv2 = tf.keras.layers.Conv2D(64, (3, 3), activation='relu', padding='same')(conv2)
+    pool2 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2))(conv2)
+
+    conv3 = tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same')(pool2)
+    conv3 = tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same')(conv3)
+    pool3 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2))(conv3)
+
+    conv4 = tf.keras.layers.Conv2D(256, (3, 3), activation='relu', padding='same')(pool3)
+    conv4 = tf.keras.layers.Conv2D(256, (3, 3), activation='relu', padding='same')(conv4)
+    pool4 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2))(conv4)
+
+    conv5 = tf.keras.layers.Conv2D(512, (3, 3), activation='relu', padding='same')(pool4)
+    conv5 = tf.keras.layers.Conv2D(512, (3, 3), activation='relu', padding='same')(conv5)
+
+    # up6 = tf.keras.layers.Concatenate([tf.keras.layers.Conv2DTranspose(256, (2, 2), strides=(2, 2), padding='same')(conv5), conv4], axis=3)
+    up6 = tf.concat([tf.keras.layers.Conv2DTranspose(256, (2, 2), strides=(2, 2), padding='same')(conv5), conv4], axis=3)
+    conv6 = tf.keras.layers.Conv2D(256, (3, 3), activation='relu', padding='same')(up6)
+    conv6 = tf.keras.layers.Conv2D(256, (3, 3), activation='relu', padding='same')(conv6)
+
+    # up7 = tf.keras.layers.Concatenate([tf.keras.layers.Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same')(conv6), conv3], axis=3)
+    up7 = tf.concat([tf.keras.layers.Conv2DTranspose(128, (2, 2), strides=(2, 2), padding='same')(conv6), conv3], axis=3)
+    conv7 = tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same')(up7)
+    conv7 = tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same')(up7)
+    conv7 = tf.keras.layers.Conv2D(128, (3, 3), activation='relu', padding='same')(conv7)
+
+    # up8 = tf.keras.layers.Concatenate([tf.keras.layers.Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same')(conv7), conv2], axis=3)
+    up8 = tf.concat([tf.keras.layers.Conv2DTranspose(64, (2, 2), strides=(2, 2), padding='same')(conv7), conv2], axis=3)
+    conv8 = tf.keras.layers.Conv2D(64, (3, 3), activation='relu', padding='same')(up8)
+    conv8 = tf.keras.layers.Conv2D(64, (3, 3), activation='relu', padding='same')(conv8)
+
+    # up9 = tf.keras.layers.Concatenate([tf.keras.layers.Conv2DTranspose(32, (2, 2), strides=(2, 2), padding='same')(conv8), conv1], axis=3)
+    up9 = tf.concat([tf.keras.layers.Conv2DTranspose(32, (2, 2), strides=(2, 2), padding='same')(conv8), conv1], axis=3)
+    conv9 = tf.keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same')(up9)
+    conv9 = tf.keras.layers.Conv2D(32, (3, 3), activation='relu', padding='same')(conv9)
+
+    conv10 = tf.keras.layers.Conv2D(1, (1, 1), activation='sigmoid')(conv9)
+
+    return tf.keras.Model(inputs=[inputs], outputs=[conv10])
+
+model = unet(input_size=(512,512,1))
+model.compile(optimizer=tf.keras.optimizers.Adam(lr=1e-5), loss=dice_coef_loss,
+                  metrics=[dice_coef, 'binary_accuracy'])
+# model.summary()
+ROOT_DIR = os.getcwd()
+weight_path="cxr_reg_weights.best.hdf5"
+model_weights_path = os.path.join(ROOT_DIR,"Weights",weight_path)
+model.load_weights(model_weights_path)
+
+"""
+Shapes that you wish to resize to
+"""
+
+Shape_X,Shape_Y=512,512
+
+def read_image(img_path):
+    image = cv2.imread(img_path,0)
+    image = cv2.resize(image,(Shape_Y,Shape_X))
+    return image
+
+
+def get_preds(image):
+    prep_unet_input_img_1 = image.reshape(1,Shape_X,Shape_Y,1)
+    prep_unet_input_img = (prep_unet_input_img_1-127.0)/127.0
+    pred_img = model.predict(prep_unet_input_img)
+    pred_img_preprocessed_1 = np.squeeze(pred_img)
+    pred_img_preprocessed = (pred_img_preprocessed_1*255>127).astype(np.int8)
+    res = cv2.bitwise_and(image,image,mask = pred_img_preprocessed)
+    return res,pred_img_preprocessed*255
+
+def create_folders(lst):
+    for folder in lst:
+        os.makedirs(folder, exist_ok=True)
 
 # "templates" this is for plain html files or "Great_Templates" this is for complex css + imgs +js +html+sass
 TEMPLATES = "templates"
@@ -46,114 +130,6 @@ ROOT_DIR = app.root_path
 # Reloading
 app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-
-
-preprocess_input = sm.get_preprocessing(BACKBONE)
-
-# define network parameters
-n_classes = 1
-activation = 'sigmoid'
-
-
-weight_path="Keras_SegModels_UNET_Car_Damage_detectioneps300.hdf5"
-weight_path = os.path.join(ROOT_DIR,"Weights",weight_path)
-
-#create model
-model = sm.Unet(BACKBONE, classes=n_classes, activation=activation,weights=weight_path,encoder_weights =None)
-"""
-encoder_weights – one of None (random initialization), imagenet (pre-training on ImageNet).
-"""
-
-# define optomizer
-optim = tf.keras.optimizers.Adam(LR)
-
-# Segmentation models losses can be combined together by '+' and scaled by integer or float factor
-dice_loss = sm.losses.DiceLoss()
-focal_loss = sm.losses.BinaryFocalLoss() if n_classes == 1 else sm.losses.CategoricalFocalLoss()
-total_loss = dice_loss + (1 * focal_loss)
-
-# actulally total_loss can be imported directly from library, above example just show you how to manipulate with losses
-# total_loss = sm.losses.binary_focal_dice_loss # or sm.losses.categorical_focal_dice_loss 
-
-metrics = [sm.metrics.IOUScore(threshold=0.5), sm.metrics.FScore(threshold=0.5)]
-
-# compile keras model with defined optimozer, loss and metrics
-model.compile(optim, total_loss, metrics)
-
-model.load_weights(weight_path)
-
-def read_image(img_path):
-    image = cv2.imread(img_path)
-    # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = cv2.resize(image,(MAIN_SIZE_Y,MAIN_SIZE_X))
-    return image
-
-def get_preds(image):
-    pr_mask = model.predict(image).round()
-    return pr_mask[..., 0].squeeze()
-
-def props(arr,u=0):
-    print("Shape :",arr.shape,"Maximum :",arr.max(),"Minimum :",arr.min(),"Data Type :",arr.dtype,end=' ')
-    if u==1:
-        print("Unique Values :",np.unique(arr),end=' ')
-    print()
-
-def create_folders(lst):
-    for folder in lst:
-        os.makedirs(folder, exist_ok=True)
-        
-
-def random_colors(N, bright=True):
-    """
-    Generate random colors.
-    To get visually distinct colors, generate them in HSV space then
-    convert to RGB.
-    """
-    brightness = 1.0 if bright else 0.7
-    hsv = [(i / N, 1, brightness) for i in range(N)]
-    colors = list(map(lambda c: colorsys.hsv_to_rgb(*c), hsv))
-    random.shuffle(colors)
-    return colors
-
-
-def apply_mask(image, mask, color, alpha=0.5):
-    """
-    Apply the given mask to the image.
-    """
-    for c in range(3):
-        image[:, :, c] = np.where(mask == 1,
-                                  image[:, :, c] *
-                                  (1 - alpha) + alpha * color[c] * 255,
-                                  image[:, :, c])
-    return image
-
-def apply_model(img=None,img_path=None):
-    """
-    reshaped_img,color_res,maskclass,maskbg,segmentedclassres,segmentedbgres = apply_model(img=None,img_path=None)
-    """
-    if img is None:
-        img = read_image(img_path)
-    reshaped_img = deepcopy(img)
-    """
-    Shape_X,Shape_Y,Shape_Z = img.shape
-    img = img.reshape(1,Shape_X,Shape_Y,Shape_Z)
-    """
-    exp_img = np.expand_dims(img, axis=0)
-    inv_mask = get_preds(exp_img)
-    inv_mask = inv_mask.astype(bool)
-    mask = np.invert(inv_mask)
-    mask = mask.astype(np.uint8)
-    # props(mask,u=1)
-    segmentedclassres = cv2.bitwise_and(img,img,mask = mask)
-    segmentedbgres = cv2.bitwise_and(img,img,mask = inv_mask.astype(np.uint8))
-    
-    """
-    partial superimposing
-    """
-    colours = random_colors(N=1, bright=True)
-    res= apply_mask(img, mask, color=colours[0], alpha=0.5)
-    return reshaped_img ,res,mask*255,inv_mask.astype(np.uint8)*255,segmentedclassres,segmentedbgres
-
 
 
 
@@ -181,18 +157,18 @@ def upload_file():
         os.makedirs(ImgDir, exist_ok=True)
         ImgSavePath = os.path.join(ImgDir, f.filename)
         f.save(ImgSavePath)
-
-        reshaped_img, color_res, maskclass, maskbg, segmentedclassres, segmentedbgres = apply_model(img_path=ImgSavePath)
+        reshaped_img = read_image(ImgSavePath)
+        
+        segmented_output,mask = get_preds(reshaped_img)
+        
         cv2.imwrite(os.path.join(FileSaveDir, "reshaped_img.png"), reshaped_img)
-        cv2.imwrite(os.path.join(FileSaveDir, "color_res.png"), color_res)
-        cv2.imwrite(os.path.join(FileSaveDir, "maskclass.png"), maskclass)
-        cv2.imwrite(os.path.join(FileSaveDir, "maskbg.png"), maskbg)
-        cv2.imwrite(os.path.join(FileSaveDir, "segmentedclassres.png"), segmentedclassres)
-        cv2.imwrite(os.path.join(FileSaveDir, "segmentedbgres.png"), segmentedbgres)
+        cv2.imwrite(os.path.join(FileSaveDir, "binarymask.png"), mask)
+        cv2.imwrite(os.path.join(FileSaveDir, "segmentedlungmask.png"), segmented_output)
+ 
         
         NewFileSaveDir = os.path.join(ROOT_DIR, "assets","images")
         cv2.imwrite(os.path.join(NewFileSaveDir, "reshaped_img.png"), reshaped_img)
-        cv2.imwrite(os.path.join(NewFileSaveDir, "color_res.png"), color_res)
+        cv2.imwrite(os.path.join(NewFileSaveDir, "color_res.png"), segmented_output)
         return render_template('results.html')
     return render_template('results.html')
 
